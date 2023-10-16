@@ -1400,6 +1400,7 @@ mod tests {
         VfioContainer {
             container,
             device_fd: None,
+            is_iommu: false,
             groups: Mutex::new(HashMap::new()),
         }
     }
