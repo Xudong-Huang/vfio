@@ -537,9 +537,14 @@ impl VfioGroup {
         let path = CString::new(uuid_str.as_bytes()).expect("CString::new() failed");
         #[cfg(feature = "vftoken")]
         let path = {
-            let dev_path = format!("{} vf_token={}", uuid_str, vf_token);
+            let dev_path = if vf_token == &uuid::Uuid::nil() {
+                uuid_str.to_string()
+            } else {
+                format!("{} vf_token={}", uuid_str, vf_token)
+            };
             CString::new(dev_path.as_bytes()).expect("CString::new() failed")
         };
+
         let device = vfio_syscall::get_group_device_fd(self, &path)?;
 
         let mut dev_info = vfio_device_info {
