@@ -177,9 +177,7 @@ pub(crate) mod vfio_syscall {
     }
 
     pub(crate) fn set_device_irqs(device: &VfioDevice, irq_set: &[vfio_irq_set]) -> Result<()> {
-        if irq_set.is_empty()
-            || irq_set[0].argsz as usize > irq_set.len() * size_of::<vfio_irq_set>()
-        {
+        if irq_set.is_empty() || irq_set[0].argsz as usize > std::mem::size_of_val(irq_set) {
             Err(VfioError::VfioDeviceSetIrq)
         } else {
             // SAFETY: we are the owner of self and irq_set which are valid value
@@ -236,14 +234,14 @@ pub(crate) mod vfio_syscall {
         assert_eq!(count, number);
 
         let devices = unsafe { hot_reset_info.devices.as_slice(count) };
-        for index in 0..count {
-            if devices[index as usize].group_id != device.group.id {
+        for dev in devices.iter().take(count) {
+            if dev.group_id != device.group.id {
                 return -1;
             }
         }
 
         let mut resets = vec_with_array_field::<vfio_pci_hot_reset, __s32>(1);
-        let mut reset = resets.get_mut(0).unwrap();
+        let reset = resets.get_mut(0).unwrap();
         reset.argsz = (size_of::<vfio_pci_hot_reset>() + size_of::<__s32>()) as u32;
         reset.count = 1;
         let group_fds = unsafe { reset.group_fds.as_mut_slice(1) };
