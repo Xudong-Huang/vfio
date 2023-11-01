@@ -1406,6 +1406,7 @@ mod tests {
             container,
             device_fd: None,
             groups: Mutex::new(HashMap::new()),
+            is_iommu: false,
         }
     }
 
@@ -1450,7 +1451,13 @@ mod tests {
 
         assert_eq!(group.id, 1);
         assert!(group.as_raw_fd() >= 0);
-        let device = group.get_device(tmp_file.as_path()).unwrap();
+        let device = group
+            .get_device(
+                tmp_file.as_path(),
+                #[cfg(feature = "vftoken")]
+                &uuid::Uuid::nil(),
+            )
+            .unwrap();
         assert_eq!(device.num_irqs, 3);
         assert_eq!(device.num_regions, 8);
 
@@ -1462,7 +1469,13 @@ mod tests {
     fn test_vfio_device() {
         let tmp_file = TempFile::new().unwrap();
         let container = Arc::new(create_vfio_container());
-        let device = VfioDevice::new(tmp_file.as_path(), container.clone()).unwrap();
+        let device = VfioDevice::new(
+            tmp_file.as_path(),
+            container.clone(),
+            #[cfg(feature = "vftoken")]
+            &uuid::Uuid::nil(),
+        )
+        .unwrap();
 
         assert!(device.as_raw_fd() > 0);
         assert_eq!(device.max_interrupts(), 2048);
