@@ -229,7 +229,7 @@ pub(crate) mod vfio_syscall {
         if ret < 0 {
             return ret;
         }
-        let hot_reset_info = hot_reset_infos.get(0).unwrap();
+        let hot_reset_info = hot_reset_infos.first().unwrap();
         let number = hot_reset_info.count as usize;
         assert_eq!(count, number);
 
