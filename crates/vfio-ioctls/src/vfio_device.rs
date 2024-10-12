@@ -14,7 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use byteorder::{ByteOrder, LittleEndian};
+use byteorder::{ByteOrder, NativeEndian};
 use log::{debug, error, warn};
 use vfio_bindings::bindings::vfio::*;
 use vm_memory::{Address, GuestMemory, GuestMemoryRegion, MemoryRegionAddress};
@@ -29,23 +29,20 @@ use kvm_bindings::{
 };
 #[cfg(all(feature = "kvm", not(test)))]
 use kvm_ioctls::DeviceFd as KvmDeviceFd;
-#[cfg(all(feature = "mshv", target_arch = "x86_64", not(test)))]
+#[cfg(all(feature = "mshv", not(test)))]
 use mshv_bindings::{
     mshv_device_attr, MSHV_DEV_VFIO_GROUP, MSHV_DEV_VFIO_GROUP_ADD, MSHV_DEV_VFIO_GROUP_DEL,
 };
-#[cfg(all(feature = "mshv", target_arch = "x86_64", not(test)))]
+#[cfg(all(feature = "mshv", not(test)))]
 use mshv_ioctls::DeviceFd as MshvDeviceFd;
-#[cfg(all(
-    any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")),
-    not(test)
-))]
+#[cfg(all(any(feature = "kvm", feature = "mshv"), not(test)))]
 use std::os::unix::io::FromRawFd;
 
 #[derive(Debug)]
 enum DeviceFdInner {
     #[cfg(all(feature = "kvm", not(test)))]
     Kvm(KvmDeviceFd),
-    #[cfg(all(feature = "mshv", target_arch = "x86_64", not(test)))]
+    #[cfg(all(feature = "mshv", not(test)))]
     Mshv(MshvDeviceFd),
 }
 
@@ -69,12 +66,12 @@ impl VfioDeviceFd {
         }
     }
     /// Create an VfioDeviceFd from an MSHV DeviceFd
-    #[cfg(all(feature = "mshv", target_arch = "x86_64", not(test)))]
+    #[cfg(all(feature = "mshv", not(test)))]
     pub fn new_from_mshv(fd: MshvDeviceFd) -> Self {
         VfioDeviceFd(DeviceFdInner::Mshv(fd))
     }
     /// Extract the MSHV DeviceFd from an VfioDeviceFd
-    #[cfg(all(feature = "mshv", target_arch = "x86_64", not(test)))]
+    #[cfg(all(feature = "mshv", not(test)))]
     pub fn to_mshv(self) -> Result<MshvDeviceFd> {
         match self {
             VfioDeviceFd(DeviceFdInner::Mshv(fd)) => Ok(fd),
@@ -83,10 +80,7 @@ impl VfioDeviceFd {
         }
     }
     /// Try to duplicate an VfioDeviceFd
-    #[cfg(all(
-        any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")),
-        not(test)
-    ))]
+    #[cfg(all(any(feature = "kvm", feature = "mshv"), not(test)))]
     pub fn try_clone(&self) -> Result<Self> {
         match &self.0 {
             #[cfg(feature = "kvm")]
@@ -101,7 +95,7 @@ impl VfioDeviceFd {
                     Ok(VfioDeviceFd(DeviceFdInner::Kvm(kvm_fd)))
                 }
             }
-            #[cfg(all(feature = "mshv", target_arch = "x86_64"))]
+            #[cfg(feature = "mshv")]
             DeviceFdInner::Mshv(fd) => {
                 // SAFETY: FFI call to libc
                 let dup_fd = unsafe { libc::dup(fd.as_raw_fd()) };
@@ -256,7 +250,7 @@ impl VfioContainer {
         }
 
         // Add the new group object to the hypervisor driver.
-        #[cfg(any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")))]
+        #[cfg(any(feature = "kvm", feature = "mshv"))]
         if let Err(e) = self.device_add_group(&group) {
             let _ = vfio_syscall::unset_group_container(&group, self);
             return Err(e);
@@ -277,7 +271,7 @@ impl VfioContainer {
         // - one reference cloned in VfioDevice.drop() and passed into here
         // - one reference held by the groups hashmap
         if Arc::strong_count(&group) == 3 {
-            #[cfg(any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")))]
+            #[cfg(any(feature = "kvm", feature = "mshv"))]
             match self.device_del_group(&group) {
                 Ok(_) => {}
                 Err(e) => {
@@ -367,10 +361,7 @@ impl VfioContainer {
         })
     }
 
-    #[cfg(all(
-        any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")),
-        not(test)
-    ))]
+    #[cfg(all(any(feature = "kvm", feature = "mshv"), not(test)))]
     fn device_set_group(&self, group: &VfioGroup, add: bool) -> Result<()> {
         let group_fd_ptr = &group.as_raw_fd() as *const i32;
 
@@ -392,7 +383,7 @@ impl VfioContainer {
                     fd.set_device_attr(&dev_attr)
                         .map_err(VfioError::SetDeviceAttr)
                 }
-                #[cfg(all(feature = "mshv", target_arch = "x86_64"))]
+                #[cfg(feature = "mshv")]
                 DeviceFdInner::Mshv(fd) => {
                     let flag = if add {
                         MSHV_DEV_VFIO_GROUP_ADD
@@ -406,7 +397,7 @@ impl VfioContainer {
                         addr: group_fd_ptr as u64,
                     };
                     fd.set_device_attr(&dev_attr)
-                        .map_err(VfioError::SetDeviceAttr)
+                        .map_err(|e| VfioError::SetDeviceAttr(e.into()))
                 }
             }
         } else {
@@ -420,10 +411,7 @@ impl VfioContainer {
     ///
     /// # Parameters
     /// * group: target VFIO group
-    #[cfg(all(
-        any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")),
-        not(test)
-    ))]
+    #[cfg(all(any(feature = "kvm", feature = "mshv"), not(test)))]
     fn device_add_group(&self, group: &VfioGroup) -> Result<()> {
         self.device_set_group(group, true)
     }
@@ -434,10 +422,7 @@ impl VfioContainer {
     ///
     /// # Parameters
     /// * group: target VFIO group
-    #[cfg(all(
-        any(feature = "kvm", all(feature = "mshv", target_arch = "x86_64")),
-        not(test)
-    ))]
+    #[cfg(all(any(feature = "kvm", feature = "mshv"), not(test)))]
     fn device_del_group(&self, group: &VfioGroup) -> Result<()> {
         self.device_set_group(group, false)
     }
@@ -822,9 +807,21 @@ impl VfioDeviceInfo {
                 offset: 0,
             };
 
-            if vfio_syscall::get_device_region_info(self, &mut reg_info).is_err() {
-                warn!("Could not get region #{} info", i);
-                continue;
+            if let Err(e) = vfio_syscall::get_device_region_info(self, &mut reg_info) {
+                match e {
+                    // Non-VGA devices do not have the VGA region,
+                    // the kernel indicates this by returning -EINVAL,
+                    // and it's not an error.
+                    VfioError::VfioDeviceGetRegionInfo(e)
+                        if e.errno() == libc::EINVAL && i == VFIO_PCI_VGA_REGION_INDEX =>
+                    {
+                        continue;
+                    }
+                    _ => {
+                        error!("Could not get region #{} info {}", i, e);
+                        continue;
+                    }
+                }
             }
 
             let mut region = VfioRegion {
@@ -1000,7 +997,7 @@ impl VfioDevice {
             for (index, event_fd) in event_fds.iter().enumerate() {
                 let fds_offset = index * mem::size_of::<u32>();
                 let fd = &mut fds[fds_offset..fds_offset + mem::size_of::<u32>()];
-                LittleEndian::write_u32(fd, event_fd.as_raw_fd() as u32);
+                NativeEndian::write_u32(fd, event_fd.as_raw_fd() as u32);
             }
         }
 
@@ -1050,7 +1047,7 @@ impl VfioDevice {
             for (index, event_fd) in event_rfds.iter().enumerate() {
                 let fds_offset = index * mem::size_of::<u32>();
                 let fd = &mut fds[fds_offset..fds_offset + mem::size_of::<u32>()];
-                LittleEndian::write_u32(fd, event_fd.as_raw_fd() as u32);
+                NativeEndian::write_u32(fd, event_fd.as_raw_fd() as u32);
             }
         }
 
@@ -1459,10 +1456,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(device.num_irqs, 3);
-        assert_eq!(device.num_regions, 8);
+        assert_eq!(device.num_regions, 9);
 
         let regions = device.get_regions().unwrap();
-        assert_eq!(regions.len(), 7)
+        // test code skips VFIO_PCI_VGA_REGION_INDEX
+        assert_eq!(regions.len(), 8)
     }
 
     #[test]
@@ -1481,7 +1479,7 @@ mod tests {
         assert_eq!(device.max_interrupts(), 2048);
 
         device.reset();
-        assert_eq!(device.regions.len(), 7);
+        assert_eq!(device.regions.len(), 8);
         assert_eq!(device.irqs.len(), 3);
 
         device.pci_hot_reset();
@@ -1517,16 +1515,22 @@ mod tests {
 
         assert_eq!(device.get_region_flags(1), VFIO_REGION_INFO_FLAG_CAPS);
         assert_eq!(device.get_region_flags(7), 0);
+        assert_eq!(device.get_region_flags(8), 0);
         assert_eq!(device.get_region_offset(1), 0x20000);
-        assert_eq!(device.get_region_offset(7), 0);
+        assert_eq!(device.get_region_offset(7), 0x80000);
+        assert_eq!(device.get_region_offset(8), 0);
         assert_eq!(device.get_region_size(1), 0x2000);
-        assert_eq!(device.get_region_size(7), 0);
+        assert_eq!(device.get_region_size(7), 0x8000);
+        assert_eq!(device.get_region_size(8), 0);
         assert_eq!(device.get_region_caps(1).len(), 3);
         assert_eq!(device.get_region_caps(7).len(), 0);
+        assert_eq!(device.get_region_caps(8).len(), 0);
 
         let mut buf = [0u8; 16];
+        device.region_read(8, &mut buf, 0x30000);
         device.region_read(7, &mut buf, 0x30000);
         device.region_read(1, &mut buf, 0x30000);
+        device.region_write(8, &buf, 0x30000);
         device.region_write(7, &buf, 0x30000);
         device.region_write(1, &buf, 0x30000);
 
