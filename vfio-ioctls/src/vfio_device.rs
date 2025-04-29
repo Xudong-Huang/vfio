@@ -31,12 +31,14 @@ use kvm_bindings::{
 use kvm_ioctls::DeviceFd as KvmDeviceFd;
 #[cfg(all(feature = "mshv", not(test)))]
 use mshv_bindings::{
-    mshv_device_attr, MSHV_DEV_VFIO_GROUP, MSHV_DEV_VFIO_GROUP_ADD, MSHV_DEV_VFIO_GROUP_DEL,
+    mshv_device_attr, MSHV_DEV_VFIO_FILE, MSHV_DEV_VFIO_FILE_ADD, MSHV_DEV_VFIO_FILE_DEL,
 };
 #[cfg(all(feature = "mshv", not(test)))]
 use mshv_ioctls::DeviceFd as MshvDeviceFd;
 #[cfg(all(any(feature = "kvm", feature = "mshv"), not(test)))]
 use std::os::unix::io::FromRawFd;
+#[cfg(all(feature = "mshv", not(test)))]
+use vmm_sys_util::errno::Error;
 
 #[derive(Debug)]
 enum DeviceFdInner {
@@ -236,7 +238,7 @@ impl VfioContainer {
         vfio_syscall::set_group_container(&group, self)?;
 
         // Initialize the IOMMU backend driver after binding the first group object.
-        if hash.len() == 0 {
+        if hash.is_empty() {
             let vfio_type = if self.is_iommu {
                 VFIO_TYPE1v2_IOMMU
             } else {
@@ -386,18 +388,18 @@ impl VfioContainer {
                 #[cfg(feature = "mshv")]
                 DeviceFdInner::Mshv(fd) => {
                     let flag = if add {
-                        MSHV_DEV_VFIO_GROUP_ADD
+                        MSHV_DEV_VFIO_FILE_ADD
                     } else {
-                        MSHV_DEV_VFIO_GROUP_DEL
+                        MSHV_DEV_VFIO_FILE_DEL
                     };
                     let dev_attr = mshv_device_attr {
                         flags: 0,
-                        group: MSHV_DEV_VFIO_GROUP,
+                        group: MSHV_DEV_VFIO_FILE,
                         attr: u64::from(flag),
                         addr: group_fd_ptr as u64,
                     };
                     fd.set_device_attr(&dev_attr)
-                        .map_err(|e| VfioError::SetDeviceAttr(e.into()))
+                        .map_err(|e| VfioError::SetDeviceAttr(Error::new(e.errno())))
                 }
             }
         } else {
